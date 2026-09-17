@@ -30,7 +30,7 @@ jobs:
 
       - name: Build Android APK via Flet
         run: |
-          flet build apk --project-name rp2350touch
+          flet build apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
