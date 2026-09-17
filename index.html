@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RP2350 CyberDeck</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0d0e15;
+      color: #00e5ff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* الشريط العلوي */
+    #top-bar {
+      height: 50px;
+      background: #141522;
+      border-bottom: 2px solid #00e5ff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 15px;
+      z-index: 1000;
+    }
+
+    #status {
+      font-size: 14px;
+      font-weight: bold;
+      color: #ff5252;
+    }
+
+    #connect-btn {
+      background: #00e5ff;
+      color: #000;
+      border: none;
+      padding: 8px 16px;
+      font-weight: bold;
+      border-radius: 6px;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+    }
+
+    /* شاشة الرسم الخاصة بالواجهة */
+    #canvas {
+      position: relative;
+      flex: 1;
+      width: 100%;
+      height: calc(100vh - 50px);
+      background: #08090d;
+    }
+
+    /* العناصر المرسومة dynamically */
+    .cyber-btn {
+      position: absolute;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-weight: bold;
+      font-size: 15px;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+      transition: transform 0.1s;
+    }
+
+    .cyber-btn:active {
+      transform: scale(0.95);
+    }
+
+    .cyber-txt {
+      position: absolute;
+      font-weight: bold;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .cyber-rect {
+      position: absolute;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="top-bar">
+    <div id="status">🔴 غير متصل بـ RP2350</div>
+    <button id="connect-btn" onclick="connectSerial()">🔌 توصيل OTG</button>
+  </div>
+
+  <div id="canvas"></div>
+
+  <script>
+    let port;
+    let writer;
+
+    async function connectSerial() {
+      try {
+        // طلب اتصال USB مدمج عبر Android UsbManager الرسمي
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+
+        document.getElementById('status').innerText = "🟢 متصل بـ RP2350";
+        document.getElementById('status').style.color = "#00e5ff";
+        document.getElementById('connect-btn').style.display = "none";
+
+        const textEncoder = new TextEncoderStream();
+        textEncoder.readable.pipeTo(port.writable);
+        writer = textEncoder.writable.getWriter();
+
+        // إرسال طلب الواجهة للقطعة فور التوصيل
+        await sendEvent("REQ_UI");
+
+        // بدء حلقة قراءة البيانات المباشرة
+        readLoop();
+      } catch (e) {
+        alert("خطأ في التوصيل: " + e);
+      }
+    }
+
+    async function sendEvent(data) {
+      if (writer) {
+        await writer.write(data + "\n");
+      }
+    }
+
+    async function readLoop() {
+      const textDecoder = new TextDecoderStream();
+      port.readable.pipeTo(textDecoder.writable);
+      const reader = textDecoder.readable.getReader();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += value;
+        let lines = buffer.split("\n");
+        buffer = lines.pop(); // الاحتفاظ بالسطر غير الأخير للـ Buffer القادم
+
+        for (let line of lines) {
+          if (line.trim()) parseCommand(line.trim());
+        }
+      }
+    }
+
+    function parseCommand(cmd) {
+      const parts = cmd.split(",");
+      const action = parts[0];
+      const canvas = document.getElementById("canvas");
+
+      if (action === "CLEAR") {
+        canvas.innerHTML = "";
+      } 
+      else if (action === "BTN" && parts.length >= 7) {
+        // BTN,id,text,x,y,w,h,[r,g,b]
+        let [_, id, text, x, y, w, h, r=0, g=150, b=255] = parts;
+        let btn = document.createElement("button");
+        btn.className = "cyber-btn";
+        btn.innerText = text;
+        btn.style.left = x + "px"; 
+        btn.style.top = y + "px";
+        btn.style.width = w + "px"; 
+        btn.style.height = h + "px";
+        btn.style.backgroundColor = `rgb(${r},${g},${b})`;
+        btn.onclick = () => sendEvent(`CLICK:${id}`);
+        canvas.appendChild(btn);
+      } 
+      else if (action === "TXT" && parts.length >= 6) {
+        // TXT,id,text,x,y,size,[r,g,b]
+        let [_, id, text, x, y, size, r=255, g=255, b=255] = parts;
+        let txt = document.createElement("div");
+        txt.className = "cyber-txt";
+        txt.innerText = text;
+        txt.style.left = x + "px"; 
+        txt.style.top = y + "px";
+        txt.style.fontSize = size + "px";
+        txt.style.color = `rgb(${r},${g},${b})`;
+        canvas.appendChild(txt);
+      } 
+      else if (action === "RECT" && parts.length >= 6) {
+        // RECT,id,x,y,w,h,[r,g,b]
+        let [_, id, x, y, w, h, r=30, g=35, b=50] = parts;
+        let rect = document.createElement("div");
+        rect.className = "cyber-rect";
+        rect.style.left = x + "px"; 
+        rect.style.top = y + "px";
+        rect.style.width = w + "px"; 
+        rect.style.height = h + "px";
+        rect.style.backgroundColor = `rgb(${r},${g},${b})`;
+        canvas.appendChild(rect);
+      }
+    }
+  </script>
+</body>
+</html>
