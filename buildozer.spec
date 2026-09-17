@@ -19,25 +19,10 @@ source.include_exts = py,png,jpg,kv,atlas
 version = 1.0
 
 # (list) Application requirements
-requirements = python3,kivy==2.3.0,pyserial
+requirements = python3,kivy,pyserial
 
 # (list) Permissions
 android.permissions = INTERNET
-
-# (bool) Accept SDK license automatically
-android.accept_sdk_license = True
-
-# (str) Android NDK version to use (إصدار مستقر يمنع التعارض)
-android.ndk = 25b
-
-# (int) Target Android API
-android.api = 33
-
-# (int) Minimum API supported
-android.minapi = 24
-
-# (str) Android NDK architecture
-android.archs = arm64-v8a
 
 # (bool) Fullscreen mode
 fullscreen = 1
