@@ -27,8 +27,8 @@ android.permissions = INTERNET
 # (bool) Accept SDK license automatically
 android.accept_sdk_license = True
 
-# (str) Android build tools version to use
-android.build_tools_version = 34.0.0
+# (str) Android NDK version to use (إصدار مستقر يمنع التعارض)
+android.ndk = 25b
 
 # (int) Target Android API
 android.api = 33
@@ -44,7 +44,7 @@ fullscreen = 1
 
 [buildozer]
 
-# (int) Log level (0 = error only, 1 = info, 2 = debug)
+# (int) Log level
 log_level = 2
 
 # (int) Display warning if buildozer is run as root
