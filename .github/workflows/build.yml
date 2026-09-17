@@ -30,7 +30,7 @@ jobs:
 
       - name: Build Android APK via Flet
         run: |
-          flet build apk --yes
+          flet build apk --arch armeabi-v7a --yes
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
