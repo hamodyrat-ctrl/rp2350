@@ -28,14 +28,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install flet pyserial
 
-      - name: Create Requirements File for Flet Bundling
+      - name: Create Requirements File
         run: |
           echo "flet" > requirements.txt
           echo "pyserial" >> requirements.txt
 
       - name: Build Android APK via Flet
         run: |
-          flet build apk --arch armeabi-v7a --arch arm64-v8a --yes
+          flet build apk --arch armeabi-v7a --yes
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
