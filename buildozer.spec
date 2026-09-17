@@ -6,44 +6,46 @@ title = RP2350 CyberDeck
 # (str) Package name
 package.name = rp2350touch
 
-# (str) Package domain (needed for android packaging)
+# (str) Package domain
 package.domain = org.rp2350
 
-# (str) Source code where the main.py live
+# (str) Source code directory
 source.dir = .
 
-# (list) Source files to include (let empty to include all the files)
+# (list) Source files to include
 source.include_exts = py,png,jpg,kv,atlas
 
-# (str) Application versioning (method 1)
+# (str) Application versioning
 version = 1.0
 
 # (list) Application requirements
-# comma separated e.g. requirements = sqlite3,kivy
 requirements = python3,kivy==2.3.0,pyserial
 
 # (list) Permissions
 android.permissions = INTERNET
 
-# (int) Target Android API, should be as high as possible.
+# (bool) Accept SDK license automatically
+android.accept_sdk_license = True
+
+# (str) Android build tools version to use
+android.build_tools_version = 34.0.0
+
+# (int) Target Android API
 android.api = 33
 
-# (int) Minimum API your APK will support.
+# (int) Minimum API supported
 android.minapi = 24
 
-# (str) Android NDK architecture to build for
+# (str) Android NDK architecture
 android.archs = arm64-v8a
 
-# (bool) Indicate if the application should be fullscreen or not
+# (bool) Fullscreen mode
 fullscreen = 1
-
-# (list) List of inclusions using pattern matching
-# android.add_libs_xml =
 
 [buildozer]
 
-# (int) Log level (0 = error only, 1 = info, 2 = debug (with command output))
+# (int) Log level (0 = error only, 1 = info, 2 = debug)
 log_level = 2
 
-# (int) Display warning if buildozer is run as root (0 = error, 1 = warning)
+# (int) Display warning if buildozer is run as root
 warn_on_root = 1
