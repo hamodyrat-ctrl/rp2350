@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RP2350 CyberDeck</title>
+  <title>RP2350 CyberDeck Hub</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -19,7 +19,7 @@
 
     /* الشريط العلوي */
     #top-bar {
-      height: 50px;
+      height: 55px;
       background: #141522;
       border-bottom: 2px solid #00e5ff;
       display: flex;
@@ -30,20 +30,22 @@
     }
 
     #status {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: bold;
       color: #ff5252;
     }
 
-    #connect-btn {
+    .btn-conn {
       background: #00e5ff;
       color: #000;
       border: none;
-      padding: 8px 16px;
+      padding: 8px 12px;
       font-weight: bold;
+      font-size: 12px;
       border-radius: 6px;
       cursor: pointer;
-      box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+      box-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
+      margin-left: 5px;
     }
 
     /* شاشة الرسم الخاصة بالواجهة */
@@ -51,18 +53,18 @@
       position: relative;
       flex: 1;
       width: 100%;
-      height: calc(100vh - 50px);
+      height: calc(100vh - 55px);
       background: #08090d;
     }
 
-    /* العناصر المرسومة dynamically */
+    /* العناصر المرسومة */
     .cyber-btn {
       position: absolute;
       border: none;
       border-radius: 8px;
       color: #fff;
       font-weight: bold;
-      font-size: 15px;
+      font-size: 14px;
       cursor: pointer;
       box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
       transition: transform 0.1s;
@@ -88,65 +90,151 @@
 <body>
 
   <div id="top-bar">
-    <div id="status">🔴 غير متصل بـ RP2350</div>
-    <button id="connect-btn" onclick="connectSerial()">🔌 توصيل OTG</button>
+    <div id="status">🔴 غير متصل</div>
+    <div>
+      <button class="btn-conn" onclick="connectMobileOTG()">📱 توصيل الموبايل (OTG)</button>
+      <button class="btn-conn" style="background:#7c4dff; color:#fff;" onclick="connectPC()">💻 كمبيوتر</button>
+    </div>
   </div>
 
   <div id="canvas"></div>
 
   <script>
-    let port;
-    let writer;
+    let mode = ""; // "webusb" or "webserial"
+    let portWriter, usbDevice, inEndpoint = 1, outEndpoint = 2, dataInterfaceNum = 1;
 
-    async function connectSerial() {
+    // -------------------------------------------------------------
+    // 1. الاتصال المخصص للموبايل عبر OTG (WebUSB)
+    // -------------------------------------------------------------
+    async function connectMobileOTG() {
       try {
-        // طلب اتصال USB مدمج عبر Android UsbManager الرسمي
-        port = await navigator.serial.requestPort();
-        await port.open({ baudRate: 115200 });
+        // طلب جهاز الـ USB الموصول بالكابل
+        usbDevice = await navigator.usb.requestDevice({
+          filters: [{ vendorId: 0x2e8a }] // Raspberry Pi RP2350 / RP2040
+        });
 
-        document.getElementById('status').innerText = "🟢 متصل بـ RP2350";
-        document.getElementById('status').style.color = "#00e5ff";
-        document.getElementById('connect-btn').style.display = "none";
+        await usbDevice.open();
+        if (usbDevice.configuration === null) {
+          await usbDevice.selectConfiguration(1);
+        }
 
-        const textEncoder = new TextEncoderStream();
-        textEncoder.readable.pipeTo(port.writable);
-        writer = textEncoder.writable.getWriter();
+        // تحديد واجهة البيانات (CDC Data Interface)
+        let dataInterface = usbDevice.configuration.interfaces.find(iface => 
+          iface.alternates.some(alt => alt.interfaceClass === 0x0a || alt.interfaceClass === 0x02)
+        ) || usbDevice.configuration.interfaces[1];
 
-        // إرسال طلب الواجهة للقطعة فور التوصيل
-        await sendEvent("REQ_UI");
+        dataInterfaceNum = dataInterface.interfaceNumber;
+        await usbDevice.claimInterface(dataInterfaceNum);
 
-        // بدء حلقة قراءة البيانات المباشرة
-        readLoop();
+        // تفعيل خط الداتا DTR
+        try {
+          await usbDevice.controlTransferOut({
+            requestType: 'class',
+            recipient: 'interface',
+            request: 0x22, // SET_CONTROL_LINE_STATE
+            value: 0x01,   // DTR High
+            index: 0
+          });
+        } catch(e){}
+
+        // تحديد نقاط الإرسال والاستقبال
+        let alt = dataInterface.alternates[0];
+        for (let ep of alt.endpoints) {
+          if (ep.direction === 'in') inEndpoint = ep.endpointNumber;
+          if (ep.direction === 'out') outEndpoint = ep.endpointNumber;
+        }
+
+        mode = "webusb";
+        updateStatus("🟢 متصل عبر OTG (الموبايل)", "#00e5ff");
+
+        // طلب الواجهة من RP2350
+        await sendCommand("REQ_UI");
+        readUsbLoop();
+
       } catch (e) {
-        alert("خطأ في التوصيل: " + e);
+        alert("خطأ في اتصال الموبايل: " + e.message);
       }
     }
 
-    async function sendEvent(data) {
-      if (writer) {
-        await writer.write(data + "\n");
-      }
-    }
-
-    async function readLoop() {
-      const textDecoder = new TextDecoderStream();
-      port.readable.pipeTo(textDecoder.writable);
-      const reader = textDecoder.readable.getReader();
+    async function readUsbLoop() {
+      let decoder = new TextDecoder();
       let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += value;
-        let lines = buffer.split("\n");
-        buffer = lines.pop(); // الاحتفاظ بالسطر غير الأخير للـ Buffer القادم
-
-        for (let line of lines) {
-          if (line.trim()) parseCommand(line.trim());
+      while (usbDevice && usbDevice.opened) {
+        try {
+          let result = await usbDevice.transferIn(inEndpoint, 64);
+          if (result.data && result.data.byteLength > 0) {
+            buffer += decoder.decode(result.data);
+            let lines = buffer.split("\n");
+            buffer = lines.pop();
+            for (let line of lines) {
+              if (line.trim()) parseCommand(line.trim());
+            }
+          }
+        } catch (e) {
+          break;
         }
       }
     }
 
+    // -------------------------------------------------------------
+    // 2. الاتصال المخصص للكمبيوتر (WebSerial)
+    // -------------------------------------------------------------
+    async function connectPC() {
+      try {
+        let serialPort = await navigator.serial.requestPort();
+        await serialPort.open({ baudRate: 115200 });
+
+        const textEncoder = new TextEncoderStream();
+        textEncoder.readable.pipeTo(serialPort.writable);
+        portWriter = textEncoder.writable.getWriter();
+
+        mode = "webserial";
+        updateStatus("🟢 متصل عبر السيريال (الكمبيوتر)", "#7c4dff");
+
+        await sendCommand("REQ_UI");
+
+        // حلقة القراءة للكمبيوتر
+        const textDecoder = new TextDecoderStream();
+        serialPort.readable.pipeTo(textDecoder.writable);
+        const reader = textDecoder.readable.getReader();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          let lines = buffer.split("\n");
+          buffer = lines.pop();
+          for (let line of lines) {
+            if (line.trim()) parseCommand(line.trim());
+          }
+        }
+      } catch (e) {
+        alert("خطأ في اتصال الكمبيوتر: " + e.message);
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 3. إرسال الأوامر الموحد
+    // -------------------------------------------------------------
+    async function sendCommand(data) {
+      if (mode === "webusb" && usbDevice) {
+        let encoder = new TextEncoder();
+        await usbDevice.transferOut(outEndpoint, encoder.encode(data + "\n"));
+      } else if (mode === "webserial" && portWriter) {
+        await portWriter.write(data + "\n");
+      }
+    }
+
+    function updateStatus(txt, col) {
+      const st = document.getElementById("status");
+      st.innerText = txt;
+      st.style.color = col;
+    }
+
+    // -------------------------------------------------------------
+    // 4. معالج رسم الأوامر القادمة من RP2350
+    // -------------------------------------------------------------
     function parseCommand(cmd) {
       const parts = cmd.split(",");
       const action = parts[0];
@@ -156,7 +244,6 @@
         canvas.innerHTML = "";
       } 
       else if (action === "BTN" && parts.length >= 7) {
-        // BTN,id,text,x,y,w,h,[r,g,b]
         let [_, id, text, x, y, w, h, r=0, g=150, b=255] = parts;
         let btn = document.createElement("button");
         btn.className = "cyber-btn";
@@ -166,11 +253,10 @@
         btn.style.width = w + "px"; 
         btn.style.height = h + "px";
         btn.style.backgroundColor = `rgb(${r},${g},${b})`;
-        btn.onclick = () => sendEvent(`CLICK:${id}`);
+        btn.onclick = () => sendCommand(`CLICK:${id}`);
         canvas.appendChild(btn);
       } 
       else if (action === "TXT" && parts.length >= 6) {
-        // TXT,id,text,x,y,size,[r,g,b]
         let [_, id, text, x, y, size, r=255, g=255, b=255] = parts;
         let txt = document.createElement("div");
         txt.className = "cyber-txt";
@@ -182,7 +268,6 @@
         canvas.appendChild(txt);
       } 
       else if (action === "RECT" && parts.length >= 6) {
-        // RECT,id,x,y,w,h,[r,g,b]
         let [_, id, x, y, w, h, r=30, g=35, b=50] = parts;
         let rect = document.createElement("div");
         rect.className = "cyber-rect";
