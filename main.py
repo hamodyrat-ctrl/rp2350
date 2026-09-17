@@ -1,113 +1,128 @@
+import flet as ft
 import serial
 import serial.tools.list_ports
 import threading
-from kivy.app import App
-from kivy.uix.floatlayout import FloatLayout
-from kivy.uix.button import Button
-from kivy.uix.label import Label
-from kivy.graphics import Color, Rectangle
-from kivy.clock import Clock
+import time
 
-class UniversalDisplay(FloatLayout):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.widgets = {}
-        self.rect_graphics = {}
-        self.ser = None
-        self.connect_serial()
+def main(page: ft.Page):
+    page.title = "RP2350 CyberDeck"
+    page.bgcolor = ft.colors.BLACK
+    page.padding = 0
 
-    def auto_find_port(self):
-        ports = list(serial.tools.list_ports.comports())
-        for p in ports:
-            return p.device
-        return None
+    # شاشة برسم مطلق لتحديد مواقع العناصر بدقة (Stack)
+    canvas_stack = ft.Stack(expand=True)
+    page.add(canvas_stack)
 
-    def connect_serial(self):
-        port = self.auto_find_port()
-        if port:
+    widgets_dict = {}
+    ser_ref = [None]
+
+    def send_event(data):
+        if ser_ref[0] and ser_ref[0].is_open:
             try:
-                self.ser = serial.Serial(port, 115200, timeout=0.05)
-                print(f"Connected to {port}")
-                threading.Thread(target=self.read_serial, daemon=True).start()
-                Clock.schedule_once(lambda dt: self.send_event("REQ_UI"), 1.0)
+                ser_ref[0].write(f"{data}\n".encode('utf-8'))
             except Exception as e:
-                print(f"Connection Error: {e}")
-        else:
-            print("No Serial Port Found!")
+                print("Send error:", e)
 
-    def read_serial(self):
-        while True:
-            if self.ser and self.ser.is_open:
-                try:
-                    line = self.ser.readline().decode('utf-8', errors='ignore').strip()
-                    if line:
-                        Clock.schedule_once(lambda dt, l=line: self.parse_command(l))
-                except Exception:
-                    pass
-
-    def parse_command(self, cmd):
+    def parse_command(cmd):
         parts = cmd.split(',')
         action = parts[0]
 
         if action == "CLEAR":
-            self.clear_widgets()
-            self.canvas.before.clear()
-            self.widgets.clear()
-            self.rect_graphics.clear()
+            canvas_stack.controls.clear()
+            widgets_dict.clear()
+            page.update()
 
         elif action == "BTN" and len(parts) >= 7:
             # BTN,id,text,x,y,w,h,[r,g,b]
             w_id, text = parts[1], parts[2]
             x, y, w, h = float(parts[3]), float(parts[4]), float(parts[5]), float(parts[6])
             
-            btn = Button(text=text, pos=(x, y), size_hint=(None, None), size=(w, h))
+            bg_color = ft.colors.BLUE
             if len(parts) >= 10:
-                r, g, b = float(parts[7])/255.0, float(parts[8])/255.0, float(parts[9])/255.0
-                btn.background_color = (r, g, b, 1)
-                
-            btn.bind(on_press=lambda inst, b_id=w_id: self.send_event(f"CLICK:{b_id}"))
-            
-            if w_id in self.widgets:
-                self.remove_widget(self.widgets[w_id])
-            self.add_widget(btn)
-            self.widgets[w_id] = btn
+                r, g, b = int(parts[7]), int(parts[8]), int(parts[9])
+                bg_color = f"#{r:02x}{g:02x}{b:02x}"
+
+            btn = ft.Container(
+                content=ft.ElevatedButton(
+                    text=text,
+                    on_click=lambda e, b_id=w_id: send_event(f"CLICK:{b_id}"),
+                    style=ft.ButtonStyle(
+                        bgcolor=bg_color,
+                        color=ft.colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                ),
+                left=x,
+                top=y,
+                width=w,
+                height=h,
+            )
+            canvas_stack.controls.append(btn)
+            widgets_dict[w_id] = btn
+            page.update()
 
         elif action == "TXT" and len(parts) >= 6:
             # TXT,id,text,x,y,size,[r,g,b]
             w_id, text = parts[1], parts[2]
             x, y, size = float(parts[3]), float(parts[4]), float(parts[5])
             
-            if w_id in self.widgets:
-                self.widgets[w_id].text = text
-                self.widgets[w_id].pos = (x, y)
-            else:
-                lbl = Label(text=text, pos=(x, y), font_size=size, size_hint=(None, None))
-                if len(parts) >= 9:
-                    r, g, b = float(parts[6])/255.0, float(parts[7])/255.0, float(parts[8])/255.0
-                    lbl.color = (r, g, b, 1)
-                self.add_widget(lbl)
-                self.widgets[w_id] = lbl
+            txt_color = ft.colors.WHITE
+            if len(parts) >= 9:
+                r, g, b = int(parts[6]), int(parts[7]), int(parts[8])
+                txt_color = f"#{r:02x}{g:02x}{b:02x}"
+
+            txt = ft.Container(
+                content=ft.Text(value=text, size=size, color=txt_color, weight=ft.FontWeight.BOLD),
+                left=x,
+                top=y,
+            )
+            canvas_stack.controls.append(txt)
+            widgets_dict[w_id] = txt
+            page.update()
 
         elif action == "RECT" and len(parts) >= 6:
             # RECT,id,x,y,w,h,[r,g,b]
             w_id = parts[1]
             x, y, w, h = float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])
-            r, g, b = 1.0, 1.0, 1.0
+            
+            rect_color = ft.colors.WHITE
             if len(parts) >= 9:
-                r, g, b = float(parts[6])/255.0, float(parts[7])/255.0, float(parts[8])/255.0
-                
-            with self.canvas.before:
-                Color(r, g, b)
-                rect = Rectangle(pos=(x, y), size=(w, h))
-                self.rect_graphics[w_id] = rect
+                r, g, b = int(parts[6]), int(parts[7]), int(parts[8])
+                rect_color = f"#{r:02x}{g:02x}{b:02x}"
 
-    def send_event(self, data):
-        if self.ser and self.ser.is_open:
-            self.ser.write(f"{data}\n".encode('utf-8'))
+            rect = ft.Container(
+                left=x,
+                top=y,
+                width=w,
+                height=h,
+                bgcolor=rect_color,
+                border_radius=4,
+            )
+            canvas_stack.controls.append(rect)
+            widgets_dict[w_id] = rect
+            page.update()
 
-class ControllerApp(App):
-    def build(self):
-        return UniversalDisplay()
+    def read_serial():
+        while True:
+            ports = list(serial.tools.list_ports.comports())
+            if ports and (not ser_ref[0] or not ser_ref[0].is_open):
+                try:
+                    ser_ref[0] = serial.Serial(ports[0].device, 115200, timeout=0.05)
+                    time.sleep(1)
+                    send_event("REQ_UI")
+                except Exception:
+                    pass
+            
+            if ser_ref[0] and ser_ref[0].is_open:
+                try:
+                    line = ser_ref[0].readline().decode('utf-8', errors='ignore').strip()
+                    if line:
+                        parse_command(line)
+                except Exception:
+                    pass
+            time.sleep(0.01)
 
-if __name__ == '__main__':
-    ControllerApp().run()
+    threading.Thread(target=read_serial, daemon=True).start()
+
+if __name__ == "__main__":
+    ft.app(target=main)
