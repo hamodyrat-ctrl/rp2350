@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RP2350 CyberDeck Hub</title>
+  <title>RP2350 Universal CyberDeck Display</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -16,8 +16,6 @@
       display: flex;
       flex-direction: column;
     }
-
-    /* الشريط العلوي */
     #top-bar {
       height: 55px;
       background: #141522;
@@ -28,63 +26,20 @@
       padding: 0 15px;
       z-index: 1000;
     }
-
-    #status {
-      font-size: 13px;
-      font-weight: bold;
-      color: #ff5252;
-    }
-
+    #status { font-size: 13px; font-weight: bold; color: #ff5252; }
     .btn-conn {
-      background: #00e5ff;
-      color: #000;
-      border: none;
-      padding: 8px 12px;
-      font-weight: bold;
-      font-size: 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      box-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
-      margin-left: 5px;
+      background: #00e5ff; color: #000; border: none; padding: 8px 12px;
+      font-weight: bold; font-size: 12px; border-radius: 6px; cursor: pointer;
+      box-shadow: 0 0 10px rgba(0, 229, 255, 0.3); margin-left: 5px;
     }
-
-    /* شاشة الرسم */
-    #canvas {
-      position: relative;
-      flex: 1;
-      width: 100%;
-      height: calc(100vh - 55px);
-      background: #08090d;
-    }
-
-    /* العناصر المرسومة */
+    #canvas { position: relative; flex: 1; width: 100%; height: calc(100vh - 55px); background: #08090d; }
     .cyber-btn {
-      position: absolute;
-      border: none;
-      border-radius: 8px;
-      color: #fff;
-      font-weight: bold;
-      font-size: 14px;
-      cursor: pointer;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
-      transition: transform 0.1s;
+      position: absolute; border: none; border-radius: 8px; color: #fff;
+      font-weight: bold; font-size: 14px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
     }
-
-    .cyber-btn:active {
-      transform: scale(0.95);
-    }
-
-    .cyber-txt {
-      position: absolute;
-      font-weight: bold;
-      white-space: nowrap;
-      user-select: none;
-    }
-
-    .cyber-rect {
-      position: absolute;
-      border-radius: 6px;
-    }
+    .cyber-btn:active { transform: scale(0.95); }
+    .cyber-txt { position: absolute; font-weight: bold; white-space: nowrap; user-select: none; }
+    .cyber-rect { position: absolute; border-radius: 6px; }
   </style>
 </head>
 <body>
@@ -100,76 +55,42 @@
   <div id="canvas"></div>
 
   <script>
-    let mode = ""; 
-    let portWriter, usbDevice;
-    let inEndpoint = null, outEndpoint = null;
+    let mode = "", portWriter, usbDevice, inEndpoint = null, outEndpoint = null;
 
-    // -------------------------------------------------------------
-    // 1. الاتصال المخصص للموبايل عبر OTG (مع حجز الواجهات المترابطة)
-    // -------------------------------------------------------------
     async function connectMobileOTG() {
       try {
         usbDevice = await navigator.usb.requestDevice({ filters: [] });
-
         await usbDevice.open();
-        if (usbDevice.configuration === null) {
-          await usbDevice.selectConfiguration(1);
-        }
+        if (usbDevice.configuration === null) await usbDevice.selectConfiguration(1);
 
-        // حجز جميع الواجهات المتاحة للجهاز لمنع خطأ Unclaimed Interface
-        inEndpoint = null;
-        outEndpoint = null;
-
+        inEndpoint = null; outEndpoint = null;
         for (let iface of usbDevice.configuration.interfaces) {
-          try {
-            await usbDevice.claimInterface(iface.interfaceNumber);
-          } catch (err) {
-            console.log("Could not claim interface " + iface.interfaceNumber, err);
-          }
-
+          try { await usbDevice.claimInterface(iface.interfaceNumber); } catch (err) {}
           for (let alt of iface.alternates) {
             for (let ep of alt.endpoints) {
               if (ep.type === 'bulk') {
-                if (ep.direction === 'out' && !outEndpoint) {
-                  outEndpoint = ep.endpointNumber;
-                }
-                if (ep.direction === 'in' && !inEndpoint) {
-                  inEndpoint = ep.endpointNumber;
-                }
+                if (ep.direction === 'out' && !outEndpoint) outEndpoint = ep.endpointNumber;
+                if (ep.direction === 'in' && !inEndpoint) inEndpoint = ep.endpointNumber;
               }
             }
           }
         }
 
-        if (!outEndpoint || !inEndpoint) {
-          throw new Error("لم يتم العثور على منافذ Data (Bulk Endpoints)");
-        }
-
-        // تفعيل خط الداتا DTR للقطعة
         try {
-          await usbDevice.controlTransferOut({
-            requestType: 'class',
-            recipient: 'interface',
-            request: 0x22,
-            value: 0x03,
-            index: 0
-          });
+          await usbDevice.controlTransferOut({ requestType: 'class', recipient: 'interface', request: 0x22, value: 0x03, index: 0 });
         } catch(e) {}
 
         mode = "webusb";
         updateStatus("🟢 متصل عبر OTG (الموبايل)", "#00e5ff");
-
         await sendCommand("REQ_UI");
         readUsbLoop();
-
       } catch (e) {
         alert("خطأ في اتصال الموبايل: " + e.message);
       }
     }
 
     async function readUsbLoop() {
-      let decoder = new TextDecoder();
-      let buffer = "";
+      let decoder = new TextDecoder(), buffer = "";
       while (usbDevice && usbDevice.opened) {
         try {
           let result = await usbDevice.transferIn(inEndpoint, 64);
@@ -177,34 +98,25 @@
             buffer += decoder.decode(result.data);
             let lines = buffer.split("\n");
             buffer = lines.pop();
-            for (let line of lines) {
-              if (line.trim()) parseCommand(line.trim());
-            }
+            for (let line of lines) if (line.trim()) parseCommand(line.trim());
           }
-        } catch (e) {
-          break;
-        }
+        } catch (e) { break; }
       }
     }
 
-    // -------------------------------------------------------------
-    // 2. الاتصال المخصص للكمبيوتر (WebSerial)
-    // -------------------------------------------------------------
     async function connectPC() {
       try {
         let serialPort = await navigator.serial.requestPort();
         await serialPort.open({ baudRate: 115200 });
-
         const textEncoder = new TextEncoderStream();
         textEncoder.readable.pipeTo(serialPort.writable);
         portWriter = textEncoder.writable.getWriter();
 
         mode = "webserial";
         updateStatus("🟢 متصل عبر السيريال (الكمبيوتر)", "#7c4dff");
-
         await sendCommand("REQ_UI");
 
-        const textDecoder = new TextEncoderStream();
+        const textDecoder = new TextDecoderStream();
         serialPort.readable.pipeTo(textDecoder.writable);
         const reader = textDecoder.readable.getReader();
         let buffer = "";
@@ -215,18 +127,11 @@
           buffer += value;
           let lines = buffer.split("\n");
           buffer = lines.pop();
-          for (let line of lines) {
-            if (line.trim()) parseCommand(line.trim());
-          }
+          for (let line of lines) if (line.trim()) parseCommand(line.trim());
         }
-      } catch (e) {
-        alert("خطأ في اتصال الكمبيوتر: " + e.message);
-      }
+      } catch (e) { alert("خطأ في اتصال الكمبيوتر: " + e.message); }
     }
 
-    // -------------------------------------------------------------
-    // 3. إرسال الأوامر
-    // -------------------------------------------------------------
     async function sendCommand(data) {
       if (mode === "webusb" && usbDevice && outEndpoint !== null) {
         let encoder = new TextEncoder();
@@ -238,13 +143,9 @@
 
     function updateStatus(txt, col) {
       const st = document.getElementById("status");
-      st.innerText = txt;
-      st.style.color = col;
+      st.innerText = txt; st.style.color = col;
     }
 
-    // -------------------------------------------------------------
-    // 4. رسم الأوامر
-    // -------------------------------------------------------------
     function parseCommand(cmd) {
       const parts = cmd.split(",");
       const action = parts[0];
@@ -252,39 +153,28 @@
 
       if (action === "CLEAR") {
         canvas.innerHTML = "";
-      } 
-      else if (action === "BTN" && parts.length >= 7) {
+      } else if (action === "BTN" && parts.length >= 7) {
         let [_, id, text, x, y, w, h, r=0, g=150, b=255] = parts;
         let btn = document.createElement("button");
-        btn.className = "cyber-btn";
-        btn.innerText = text;
-        btn.style.left = x + "px"; 
-        btn.style.top = y + "px";
-        btn.style.width = w + "px"; 
-        btn.style.height = h + "px";
+        btn.className = "cyber-btn"; btn.innerText = text;
+        btn.style.left = x + "px"; btn.style.top = y + "px";
+        btn.style.width = w + "px"; btn.style.height = h + "px";
         btn.style.backgroundColor = `rgb(${r},${g},${b})`;
         btn.onclick = () => sendCommand(`CLICK:${id}`);
         canvas.appendChild(btn);
-      } 
-      else if (action === "TXT" && parts.length >= 6) {
+      } else if (action === "TXT" && parts.length >= 6) {
         let [_, id, text, x, y, size, r=255, g=255, b=255] = parts;
         let txt = document.createElement("div");
-        txt.className = "cyber-txt";
-        txt.innerText = text;
-        txt.style.left = x + "px"; 
-        txt.style.top = y + "px";
-        txt.style.fontSize = size + "px";
-        txt.style.color = `rgb(${r},${g},${b})`;
+        txt.className = "cyber-txt"; txt.innerText = text;
+        txt.style.left = x + "px"; txt.style.top = y + "px";
+        txt.style.fontSize = size + "px"; txt.style.color = `rgb(${r},${g},${b})`;
         canvas.appendChild(txt);
-      } 
-      else if (action === "RECT" && parts.length >= 6) {
+      } else if (action === "RECT" && parts.length >= 6) {
         let [_, id, x, y, w, h, r=30, g=35, b=50] = parts;
         let rect = document.createElement("div");
         rect.className = "cyber-rect";
-        rect.style.left = x + "px"; 
-        rect.style.top = y + "px";
-        rect.style.width = w + "px"; 
-        rect.style.height = h + "px";
+        rect.style.left = x + "px"; rect.style.top = y + "px";
+        rect.style.width = w + "px"; rect.style.height = h + "px";
         rect.style.backgroundColor = `rgb(${r},${g},${b})`;
         canvas.appendChild(rect);
       }
