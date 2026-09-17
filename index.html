@@ -48,7 +48,7 @@
       margin-left: 5px;
     }
 
-    /* شاشة الرسم الخاصة بالواجهة */
+    /* شاشة الرسم */
     #canvas {
       position: relative;
       flex: 1;
@@ -100,54 +100,65 @@
   <div id="canvas"></div>
 
   <script>
-    let mode = ""; // "webusb" or "webserial"
-    let portWriter, usbDevice, inEndpoint = 1, outEndpoint = 2, dataInterfaceNum = 1;
+    let mode = ""; 
+    let portWriter, usbDevice;
+    let inEndpoint = null, outEndpoint = null;
 
     // -------------------------------------------------------------
-    // 1. الاتصال المخصص للموبايل عبر OTG (WebUSB)
+    // 1. الاتصال المخصص للموبايل عبر OTG (مع حجز الواجهات المترابطة)
     // -------------------------------------------------------------
     async function connectMobileOTG() {
       try {
-        // طلب جهاز الـ USB الموصول بالكابل
-        usbDevice = await navigator.usb.requestDevice({
-          filters: [{ vendorId: 0x2e8a }] // Raspberry Pi RP2350 / RP2040
-        });
+        usbDevice = await navigator.usb.requestDevice({ filters: [] });
 
         await usbDevice.open();
         if (usbDevice.configuration === null) {
           await usbDevice.selectConfiguration(1);
         }
 
-        // تحديد واجهة البيانات (CDC Data Interface)
-        let dataInterface = usbDevice.configuration.interfaces.find(iface => 
-          iface.alternates.some(alt => alt.interfaceClass === 0x0a || alt.interfaceClass === 0x02)
-        ) || usbDevice.configuration.interfaces[1];
+        // حجز جميع الواجهات المتاحة للجهاز لمنع خطأ Unclaimed Interface
+        inEndpoint = null;
+        outEndpoint = null;
 
-        dataInterfaceNum = dataInterface.interfaceNumber;
-        await usbDevice.claimInterface(dataInterfaceNum);
+        for (let iface of usbDevice.configuration.interfaces) {
+          try {
+            await usbDevice.claimInterface(iface.interfaceNumber);
+          } catch (err) {
+            console.log("Could not claim interface " + iface.interfaceNumber, err);
+          }
 
-        // تفعيل خط الداتا DTR
+          for (let alt of iface.alternates) {
+            for (let ep of alt.endpoints) {
+              if (ep.type === 'bulk') {
+                if (ep.direction === 'out' && !outEndpoint) {
+                  outEndpoint = ep.endpointNumber;
+                }
+                if (ep.direction === 'in' && !inEndpoint) {
+                  inEndpoint = ep.endpointNumber;
+                }
+              }
+            }
+          }
+        }
+
+        if (!outEndpoint || !inEndpoint) {
+          throw new Error("لم يتم العثور على منافذ Data (Bulk Endpoints)");
+        }
+
+        // تفعيل خط الداتا DTR للقطعة
         try {
           await usbDevice.controlTransferOut({
             requestType: 'class',
             recipient: 'interface',
-            request: 0x22, // SET_CONTROL_LINE_STATE
-            value: 0x01,   // DTR High
+            request: 0x22,
+            value: 0x03,
             index: 0
           });
-        } catch(e){}
-
-        // تحديد نقاط الإرسال والاستقبال
-        let alt = dataInterface.alternates[0];
-        for (let ep of alt.endpoints) {
-          if (ep.direction === 'in') inEndpoint = ep.endpointNumber;
-          if (ep.direction === 'out') outEndpoint = ep.endpointNumber;
-        }
+        } catch(e) {}
 
         mode = "webusb";
         updateStatus("🟢 متصل عبر OTG (الموبايل)", "#00e5ff");
 
-        // طلب الواجهة من RP2350
         await sendCommand("REQ_UI");
         readUsbLoop();
 
@@ -193,8 +204,7 @@
 
         await sendCommand("REQ_UI");
 
-        // حلقة القراءة للكمبيوتر
-        const textDecoder = new TextDecoderStream();
+        const textDecoder = new TextEncoderStream();
         serialPort.readable.pipeTo(textDecoder.writable);
         const reader = textDecoder.readable.getReader();
         let buffer = "";
@@ -215,10 +225,10 @@
     }
 
     // -------------------------------------------------------------
-    // 3. إرسال الأوامر الموحد
+    // 3. إرسال الأوامر
     // -------------------------------------------------------------
     async function sendCommand(data) {
-      if (mode === "webusb" && usbDevice) {
+      if (mode === "webusb" && usbDevice && outEndpoint !== null) {
         let encoder = new TextEncoder();
         await usbDevice.transferOut(outEndpoint, encoder.encode(data + "\n"));
       } else if (mode === "webserial" && portWriter) {
@@ -233,7 +243,7 @@
     }
 
     // -------------------------------------------------------------
-    // 4. معالج رسم الأوامر القادمة من RP2350
+    // 4. رسم الأوامر
     // -------------------------------------------------------------
     function parseCommand(cmd) {
       const parts = cmd.split(",");
